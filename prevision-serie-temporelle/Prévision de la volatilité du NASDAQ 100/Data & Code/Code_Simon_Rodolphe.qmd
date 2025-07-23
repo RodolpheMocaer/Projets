@@ -1,0 +1,187 @@
+---
+title: "Untitled"
+format: html
+---
+
+
+```{r}
+library(tidyverse)
+library(quantmod)
+library(PerformanceAnalytics)
+library(robustbase)
+```
+
+# Récupération datas sur Yahoo
+2018 à 2022 pour la 1ere partie du dossier
+```{r}
+getSymbols(Symbols = "NQ=F", src = "yahoo", 
+           from = as.Date("2018-01-01"), to = as.Date("2022-12-31"))
+
+# Pb avec le = donc on renomme
+NQF <- `NQ=F`
+rm(`NQ=F`)  # Supprime l'ancien nom pour éviter les problèmes
+class(NQF)
+head(NQF)
+dim(NQF)
+```
+On s'intéresse à la close (la 4e colonne)
+
+
+Petit Graph des prix
+```{r}
+par(mfrow = c(1,1))
+options(repr.plot.res = 300, repr.plot.height = 4.4) 
+plot.xts(NQF[,1:4], legend.loc = "left", main = "Prix des futures Nasdaq 100", col = rainbow(4))
+
+```
+
+Outliers
+```{r}
+# Calcul des rendements journaliers
+rNQF <- dailyReturn(NQF)
+
+# Nettoyage des rendements avec la méthode de Boudt
+crNQF <- Return.clean(rNQF, method = "boudt")
+
+# Sauvegarde des rendements propres dans un fichier
+write(t(crNQF), file = "clean-returns.out", ncolumn = 1, append = FALSE)
+
+# Combinaison des rendements bruts et nettoyés
+data <- cbind(crNQF, rNQF)
+
+# Identification des outliers
+outlier_indices <- which(rNQF != crNQF)  # Indices des outliers
+outlier_dates <- index(rNQF[outlier_indices])  # Dates des outliers
+outlier_values <- coredata(rNQF[outlier_indices])  # Valeurs des outliers
+
+# Classification des types d'outliers
+outlier_types <- ifelse(outlier_values > 0, "Outlier positif", "Outlier négatif")
+
+# Création d'un dataframe récapitulatif
+outlier_data <- data.frame(Date = outlier_dates, Valeur = outlier_values, Type = outlier_types)
+
+# Affichage des outliers détectés
+print(outlier_data)
+
+
+# Paramètres graphiques
+options(repr.plot.res = 300, repr.plot.height = 4.4) 
+
+# Tracé des rendements propres et bruts
+plot.xts(data, legend.loc = "top", main = "Clean and raw Nasdaq 100 futures returns", col = rainbow(4))
+
+# Histogrammes des rendements
+par(mfrow = c(1,2))
+chart.Histogram(rNQF, xlab = "Returns", ylab = "Frequency", methods = c("add.density", "add.normal"))
+chart.Histogram(crNQF, xlab = "Clean returns", ylab = "Frequency", methods = c("add.density", "add.normal"))
+```
+
+```{r}
+# Extraction du prix de clôture des futures Nasdaq 100
+price <- NQF[,4]
+
+# Calcul des rentabilités des futures Nasdaq 100
+return <- dailyReturn(price)
+return2 <- return^2  # Rentabilités au carré
+
+# Vérification des données
+class(price)
+head(price)
+```
+
+
+```{r}
+# Graphique du cours de clôture et des rentabilités des futures Nasdaq 100
+par(mfrow = c(2,1))
+plot.xts(price, legend.loc = "topleft", main = "Cours des futures Nasdaq 100", col = rainbow(4))
+plot.xts(return, legend.loc = "topleft", main = "Rentabilités des futures Nasdaq 100", col = "blue")
+```
+
+
+```{r}
+# Graphique des rentabilités et des rentabilités au carré des futures Nasdaq 100
+par(mfrow = c(2,1))
+plot.xts(return, legend.loc = "top", main = "Rentabilités des futures Nasdaq 100", col = rainbow(4))
+plot.xts(return2, legend.loc = "top", main = "Rentabilités au carré des futures Nasdaq 100", col = "blue")
+
+```
+
+
+# Correlogramme + histogramme
+
+```{r}
+# Corrélogrammes des rentabilités
+par(mfrow=c(2,2))
+acf(return, main="Return ACF")
+pacf(return, main="Return PACF")
+acf(return2, main="Squared return ACF")
+pacf(return2, main="Squared return PACF")
+```
+
+
+```{r}
+# Histogramme des rentabilités
+chart.Histogram(return, xlab = "Returns", ylab = "Frequency", methods = c( "add.density", "add.normal") )
+
+# show.outliers: logical; if TRUE (the default), the histogram will show all of the data points. 
+# If FALSE, it will show only the ﬁrst through the fourth quartile and will exclude outliers.
+chart.Histogram(return, xlab = "Returns", ylab = "Frequency", methods = c( "add.density", "add.normal"), show.outliers = FALSE)
+```
+
+
+# Stat descriptives
+```{r}
+# descriptive stat on returns with PerformanceAnalytics package (warning: give Ex.Kurtosis)
+library(PerformanceAnalytics)
+table.Stats(return*100)
+table.Distributions(return)
+```
+
+Test de Normalité
+```{r}
+# Jarque-Bera normality test with DescTools package
+library(DescTools)
+JarqueBeraTest(return, robust = FALSE, method = "chisq")
+```
+
+```{r}
+# autocorrelation Box-Pierce and Ljung-Box tests with 10 lags
+Box.test(return, lag = 10, type = c("Box-Pierce", "Ljung-Box"), fitdf = 0)
+```
+
+```{r}
+# ARCH test with 5 and 10 lags
+library(FinTS)
+ArchTest(return,lag=5)
+ArchTest(return,lag=10)
+```
+
+
+
+# Modèles GARCH
+Norrmalement y a les 4 et il faut faire pour les 2 distributions
+Normale et Student
+```{r}
+library(rugarch)
+```
+
+```{r}
+# GARCH modelling
+y = crNQF
+spec = ugarchspec(variance.model=list(model = "sGARCH"), mean.model=list(armaOrder=c(0,0), include.mean=TRUE))
+mod = ugarchfit(data = y, spec = spec)
+mod
+```
+
+arrondir à 3 chiffres
+```{r}
+# Compute persistence
+pers = persistence(mod)
+show(pers)
+
+# Compute half-life
+hl = halflife(mod)
+show(hl)
+```
+
+
