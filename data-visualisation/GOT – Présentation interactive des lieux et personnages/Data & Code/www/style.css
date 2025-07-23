@@ -1,0 +1,47 @@
+body, html {
+  margin: 0;
+  background-color: #BCB29E;
+}
+
+.sidebar { 
+    background-color: #DFB667;
+    color: black;
+}
+
+.navbar {
+    background-color: #DFB667; 
+    color: black;               
+}
+
+.justified-text {
+    text-align: justify;
+}
+
+/ Pied de page fixé en bas de la page /
+.footer {
+  position: fixed;
+  bottom: 0;
+  background-color: #BCB29E;
+  text-align: center;
+  padding: 10px;
+  font-size: 14px;
+}
+
+hr {
+  border: none;
+  height: 1px;
+  background-color: #BCB29E;    /* Même couleur que votre fond */
+  margin: 10px 0;              /* Espacement vertical, ajustable selon vos besoins */
+}
+
+
+.title-panel {
+    text-align: center;
+    font-size: 36px;
+    padding: 20px 0; /* Ajoute un peu d'espace autour du titre */
+}
+
+/* Ajoutez un padding au contenu principal pour éviter qu'il soit caché par le footer */
+.main-content {
+  padding-bottom: 60px; /* Ajustez cette valeur selon la hauteur de votre footer */
+}
