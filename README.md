@@ -90,15 +90,3 @@ Tous ces projets suivent une démarche rigoureuse et structurée :
 **Visualisation :** Power BI, RShiny, Dash  
 **Modélisation :** stats, ML, économétrie  
 **Outils :** Git, Jupyter, RMarkdown, etc.
-
----
-
-> 🚧 **À venir** : chaque dossier contiendra un `README.md` avec la méthodologie, les résultats et le code associé.
-
-
----
-
-## 🧰 Outils & Technologies
-Python, R, SAS, Power BI, RShiny, Dash, SQL, Git, etc.
-
----
