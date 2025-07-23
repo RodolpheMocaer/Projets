@@ -1,0 +1,1280 @@
+---
+title: "OD"
+format: html
+---
+
+# Intro
+
+library
+
+```{r}
+library(readr)
+library(dplyr)
+library(forecast)
+library(imputeTS)
+library(tseries)
+library(tsoutliers)
+library(urca)
+library(psych)
+library(factoextra)
+library(FactoMineR)
+```
+
+Importation
+
+```{r}
+bdd <- read_csv("data/balanced_uk_md.csv")
+```
+
+traitement des colonnes/formats
+
+```{r}
+bdd$Date <- as.Date(bdd$Date)
+
+# Suppression de la colonne indice
+bdd=bdd[-c(1)]
+
+# Supprimer les lignes correspondant aux dates 2024-07-01 et 2024-06-01
+bdd <- bdd %>%
+  filter(!(Date %in% as.Date(c("2024-07-01", "2024-06-01"))))
+
+# Passer notre Y IOP_PROD en 2e colonne après date
+bdd <- bdd[, c(setdiff(names(bdd), "IOP_PROD")[1], "IOP_PROD", setdiff(names(bdd), "IOP_PROD")[-1])]
+```
+
+Passage en time serie
+
+```{r}
+bdd_ajs <- ts(bdd[, 1:112], start = c(1998,01), freq = 12)
+str(bdd_ajs)
+```
+
+# Analyse exploratoire et descriptive
+
+## Analyse des valeurs manquantes
+
+```{r}
+colSums(is.na(bdd_ajs))
+```
+
+modèle d'imputation (Kalman) pour remplir les valeurs manquantes de cette série temporelle même s'il n'y en a pas
+
+```{r}
+ynew2 <- na_kalman(bdd_ajs, model = "StructTS", smooth = TRUE)
+```
+
+## Analyse des outliers : détection et correction
+
+```{r}
+Y <- ynew2[, "IOP_PROD"]
+Y
+
+fit <- tso(Y) 
+plot(fit) #Observation des points atypiques
+show(fit) 
+
+# Courbe en rouge cette fois-ci corrigée des points atypiques
+Y <- fit$yadj
+fit = tso(Y)
+show(fit)
+```
+
+## Analyse de la stationnarité de notre variable à expliquer
+
+```{r}
+model_ar1 <- arima(Y, order = c(1, 0, 0))
+
+adf.test(model_ar1$residuals) # pvalue = 0,01
+kpss.test(model_ar1$residuals)# pvalue = 0,1
+pp.test(model_ar1$residuals)# pvalue = 0,01
+```
+
+Corrélogrammes
+
+```{r}
+par(mar = c(5, 4, 4, 2) + 0.1) 
+par(mfrow=c(3,1))
+acf(Y, main = "Serie de la construction")
+pacf(Y, main = "Serie de la construction")
+```
+
+## Graphique de la variable à expliquer en niveau
+
+```{r}
+library(ggplot2)
+ggplot(bdd, aes(x = Date, y = IOP_PROD)) +
+  geom_line(color = "#962800") +
+  xlab("Temporalité") +                              
+  ylab("Indice de production industrielle (GB)") +  
+  ggtitle("Évolution de l'indice de production industrielle au Royaume-Uni") +  
+  theme_minimal()
+
+```
+
+## Statistiques descriptives de la variable à expliquer
+
+```{r}
+#ANALYSE DES VALEURS MANQUANTES#
+bdd_ajs2 <- as.data.frame(bdd_ajs)
+valeurs_manquantes <- colSums(is.na(bdd_ajs2))
+valeurs_manquantes_df <- data.frame(Variables = names(valeurs_manquantes), MissingValues = valeurs_manquantes) %>%
+  filter(MissingValues > 0)
+
+#Visualisation des valeurs manquantes
+ggplot(valeurs_manquantes_df, aes(x = reorder(Variables, -MissingValues), y = MissingValues)) +
+  geom_bar(stat = "identity", fill = "#962800", color = "black") +
+  geom_text(aes(label = MissingValues), vjust = -0.5, size = 5) + 
+  xlab("Variable") +
+  ylab("Nombre de valeurs manquantes") +
+  theme_minimal(base_size = 15) +  # Thème minimaliste
+  theme(axis.text.x = element_text(size = 12, face = "bold"),  
+        axis.title = element_text(size = 14, face = "bold"),    
+        plot.title = element_text(hjust = 0.5, size = 20, face = "bold"))
+
+#Remplacement des valeurs manquantes
+nouvelle <- na_kalman(bdd_ajs, model = "StructTS", smooth = TRUE)
+colnames(nouvelle)
+#ANALYSE DES OUTLIERS#
+#Detection des outliers#
+Y <- nouvelle[, "IOP_PROD"]
+fit <- tso(Y) 
+plot(fit)
+show(fit$outliers) 
+
+#Correction des outliers#
+Y <- fit$yadj
+fit = tso(Y)
+show(fit)
+
+#ANALYSE DE LA STATIONARITE DE Y#
+model_ar1 <- arima(Y, order = c(1, 0, 0))
+adf.test(model_ar1$residuals) 
+kpss.test(model_ar1$residuals)
+pp.test(model_ar1$residuals)
+
+
+#Corrélogrammes#
+par(mar = c(2, 4, 4, 2) + 0.1) 
+par(mfrow=c(3,1))
+acf(Y, main = "Serie de la construction")
+pacf(Y, main = "Serie de la construction")
+
+#ANALYSES DESCRIPTIVES#
+#Visualisation temporelle de Y#
+ggplot(bdd, aes(x = Date, y = IOP_PROD)) +
+  geom_line(color = "#962800") +
+  xlab("Temporalité") +                              
+  ylab("Indice de production industrielle (GB)") +  
+  ggtitle("Évolution de l'indice de production industrielle au Royaume-Uni") +  
+  theme_minimal()
+
+#PREPARATION#
+par(mfrow = c(1, 1))
+index_temporel <- seq_along(bdd$IOP_PROD)
+Ygraf <- data.frame(Index = index_temporel, Valeur = Y)
+str(Ygraf)
+#Visualisation de la dispersion de donnée boite à moustache
+boxplot(Y, xlab = 'Production industrielle', 
+        main = "Répartition de la production industrielle", 
+        col = '#962800', cex.main=0.85)
+
+#Visualisation de la dispersion de donnée histogramme
+hist(Y,freq = F, main = "Distribution de la production industrielle", col="#175732")
+
+#STATISTIQUES DESCRIPTIVES#
+#Statistique
+summary(Y)
+skewness(Y)
+kurtosis(Y)
+var(Y)
+sd(Y)
+
+#Normalité
+jarque.bera.test(Y)
+shapiro_resultats <- lapply(Y, shapiro.test)
+shapiro_resultats
+
+
+#CLASSIFICATION / ACP#
+#Suppresion de la date#
+ynew2 <- nouvelle[,-2]
+
+#acp généraliste#
+v_actives <- ynew2[,-1]
+res.pca <- PCA(v_actives, scale.unit = TRUE, ncp = 5, graph = FALSE)
+fviz_pca_var(res.pca, col.var = "cos2",
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = FALSE, axes = c(1, 2))
+#Valeurs propres#
+eig.val <- get_eigenvalue(res.pca)
+eig.val[1:10,]
+fviz_eig(res.pca, addlabels = TRUE, ylim = c(0, 100), main = "Histogrammes des valeurs propres")
+var <- get_pca_var(res.pca)
+
+#Extraction des données de l'ACP
+contrib_data <- res.pca$var$contrib
+
+#Var les plus contributives (fonction)
+get_top_contrib_vars <- function(contrib_vector) {
+  sorted_indices <- order(-contrib_vector)  # Tri décroissant
+  top_indices <- sorted_indices[1:10]  # Sélection des 10 premiers indices
+  top_contributions <- contrib_vector[top_indices]
+  top_variables <- rownames(contrib_data)[top_indices]
+  return(data.frame(Variables = top_variables, Contributions = top_contributions))
+}
+
+#Pour chaque composante
+top_contrib_info <- lapply(1:ncol(contrib_data), function(i) get_top_contrib_vars(contrib_data[, i]))
+for (i in 1:ncol(contrib_data)) {
+  cat("Les 10 variables les plus contributives pour l'Axe", i, "sont:\n")
+  print(top_contrib_info[[i]])
+  cat("\n")
+}
+#K-means / clusterisation à l'aide de l'acp
+res.hcpc <- HCPC(res.pca, graph = FALSE)
+
+#Visualisation de l'acp des individus#
+fviz_pca_ind (res.pca, col.ind = "cos2",
+              gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+              repel = FALSE)
+#Classification des individus
+fviz_cluster(res.hcpc,
+             repel = FALSE,           
+             show.clust.cent = FALSE, 
+             palette = "jco",        
+             ggtheme = theme_minimal(),
+             main = "K-means, 3 clusters")
+
+#Clusterisation réelle
+#library
+library(amap)
+library(dendextend)
+library(circlize)
+library(ade4)
+library(fastcluster)
+library(devtools)
+library(ClustOfVar)
+library(frequency)
+library(dendextend)
+library(questionr)
+library(RColorBrewer)
+source(url("https://raw.githubusercontent.com/larmarange/JLutils/master/R/A2Rplot.R"))
+source(url("https://raw.githubusercontent.com/larmarange/JLutils/master/R/clustering.R"))
+
+#matrice renversée
+mymat <- as.matrix(v_actives)
+mymat <- scale(mymat)
+mymat <- t(mymat)
+
+#Calcule de la distance
+mydi = Dist(mymat,method="abspearson")
+
+#Visusalition du Dendogramme
+myclust <- hclust(mydi)
+dend <- as.dendrogram(hclust(mydi))
+dend <- set(dend, "labels_cex", 0.3)
+
+#Optimisation du nombre de classe
+arbre<-hclustvar(ynew2[,2:111])
+plot(arbre,main="Dendrogramme")
+best.cutree(arbre)
+best.cutree(arbre, max = 10,graph = TRUE, xlab = "Nombre de classes", ylab = "Inertie relative")
+#Nombre de classes optimales = 3
+A2Rplot(arbre, k = 3, boxes = FALSE, 
+        col.up = "gray50", col.down = brewer.pal(5, "Dark2"), show.labels = TRUE)
+
+#Récupération des clusters
+P5 <- cutreevar(arbre,3)
+summary(P5)
+
+#Découpage
+typo <- cutree(arbre, 3)
+options(frequency_open_output = TRUE)
+freq(typo)
+
+#Récupération des clusters
+cluster <- as.data.frame(P5$cluster)
+cluster <- rename.variable(cluster, "P5$cluster", "cluster")
+
+#Trouvez les valeurs uniques dans la colonne "Cluster"
+unique_clusters <- unique(cluster$cluster)
+
+#Créez une liste vide pour stocker les dataframes de chaque cluster
+cluster_list <- list()
+
+#Utilisez une boucle pour créer les dataframes et les stocker dans la liste
+for (cluster_value in unique_clusters) {
+  cluster_list[[as.character(cluster_value)]] <- subset(cluster, cluster == cluster_value)
+}
+
+cluster_1 <- cluster_list$`1`
+cluster_2 <- cluster_list$`2`
+cluster_3 <- cluster_list$`3`
+cluster1 <- t(cluster_1)
+cluster2 <- t(cluster_2)
+cluster3 <- t(cluster_3)
+cluster1bis <- ynew2[,c(colnames(cluster1))]
+cluster2bis <- ynew2[,c(colnames(cluster2))]
+cluster3bis <- ynew2[,c(colnames(cluster3))]
+cluster1bis <- as.data.frame(cluster1bis)
+cluster2bis <- as.data.frame(cluster2bis)
+cluster3bis <- as.data.frame(cluster3bis)
+
+#ACP pour chaque cluster sans sélections
+#cluster 1
+res.pca_cluster1<-PCA(cluster1bis[,1:68],graph = FALSE) 
+fviz_pca_var(res.pca_cluster1, col.var = "cos2",
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = FALSE, axes = c(1, 2))
+#cluster 2
+res.pca_cluster2<-PCA(cluster2bis[,1:25],graph = FALSE) 
+fviz_pca_var(res.pca_cluster2, col.var = "cos2",
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = FALSE, axes = c(1, 2))
+#cluster 3
+res.pca_cluster3<-PCA(cluster3bis[,1:17],graph = FALSE)
+fviz_pca_var(res.pca_cluster3, col.var = "cos2",
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = FALSE, axes = c(1, 2))
+
+#ACP pour chaque cluster avec sélections
+#cluster 1
+cos2_1 <- res.pca_cluster1$var$cos2
+cos2_1_axes_1_2 <- rowSums(cos2_1[, 1:2])
+sort(cos2_1_axes_1_2, decreasing = TRUE)
+var_to_keep_1 <- names(cos2_1_axes_1_2)[cos2_1_axes_1_2 > 0.6]
+fviz_pca_var(res.pca_cluster1, select.var = list(name = var_to_keep_1),
+             col.var = "cos2",
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = TRUE, axes = c(1, 2))
+#cluster 2
+cos2_2 <- res.pca_cluster2$var$cos2
+cos2_2_axes_1_2 <- rowSums(cos2_2[, 1:2])
+sort(cos2_2_axes_1_2, decreasing = TRUE)
+var_to_keep_2 <- names(cos2_2_axes_1_2)[cos2_2_axes_1_2 > 0.6]
+fviz_pca_var(res.pca_cluster2, select.var = list(name = var_to_keep_2),
+             col.var = "cos2",
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = TRUE, axes = c(1, 2))
+
+#cluster 3
+cos2_3 <- res.pca_cluster3$var$cos2
+cos2_3_axes_1_2 <- rowSums(cos2_3[, 1:2])
+sort(cos2_3_axes_1_2, decreasing = TRUE)
+var_to_keep_3 <- names(cos2_3_axes_1_2)[cos2_3_axes_1_2 > 0.6]
+fviz_pca_var(res.pca_cluster3, select.var = list(name = var_to_keep_3),
+             col.var = "cos2",
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = TRUE, axes = c(1, 2))
+
+#CORRELATION
+library(corrplot)
+#Corrélaion entre Y et X
+correlations <- numeric(ncol(ynew2) - 1)
+
+#Entre Y et les X
+for (i in 2:ncol(ynew2)) {
+  correlations[i - 1] <- cor(ynew2[, i], ynew2[, "IOP_PROD"], method = "spearman")
+}
+
+#Data frame des résultats
+correlation_df <- data.frame(
+  Variable = colnames(ynew2)[-1],
+  Spearman_Correlation = correlations
+)
+#Filtrage des variables les plus corrélés
+#positives
+Top10_positive <- correlation_df %>%
+  arrange(desc(Spearman_Correlation)) %>%
+  head(10)
+#visualisation
+ggplot(Top10_positive, aes(x = Spearman_Correlation, y = reorder(Variable, Spearman_Correlation))) + 
+  geom_bar(stat = "identity", aes(fill = Spearman_Correlation)) + 
+  labs(x = "Coefficient de Spearman (Positif)", y = "Variables explicatives") + 
+  scale_fill_gradient2(low = "#006196", mid = "#FFCCFF", high = "#962800", midpoint = 0.3) + 
+  theme_minimal() + 
+  theme(axis.title.y = element_blank(), axis.text.y = element_text(size = 10))
+
+#négative
+Top10_negative <- correlation_df %>%
+  arrange(Spearman_Correlation) %>%
+  head(10)
+#visualisation
+ggplot(Top10_negative, aes(x = Spearman_Correlation, y = reorder(Variable, Spearman_Correlation))) + 
+  geom_bar(stat = "identity", aes(fill = Spearman_Correlation)) + 
+  labs(x = "Coefficient de Spearman (Négatif)", y = "Variables explicatives") + 
+  scale_fill_gradient2(low = "#962800", mid = "#FFCCFF", high = "#006196", midpoint = -0.3) + 
+  theme_minimal() + 
+  theme(axis.title.y = element_blank(), axis.text.y = element_text(size = 10))
+
+
+#Visualisation de la corrélation
+ggplot(correlation_df, aes(x = Spearman_Correlation, y = reorder(Variable, Spearman_Correlation))) +
+  geom_bar(stat = "identity", aes(fill = Spearman_Correlation)) +
+  labs(x = "Coefficient de Spearman", y = "Variable explicative") +
+  scale_fill_gradient2(low = "#006196", mid = "#FFCCFF", high = "#962800", midpoint = 0.3) +
+  theme_minimal() +
+  theme(axis.title.y = element_blank(), axis.text.y = element_text(size = 5)) 
+
+#Corrélation entre les X par cluster avec filtre de 0.5
+cluster1bis2 <- cluster1bis
+
+#cluster 1
+Correlation_1 = cor(cluster1bis,use = "complete.obs",method="s" )
+corrplot(Correlation_1, type = "upper", col = colorRampPalette(c("#3333FF", "#FFCCFF", "#FF0000"))(100), tl.col = "#333333")
+
+#Meilleure visualisation des clusters
+cluster1bis2 <- cluster1bis
+
+#Rennomage des colonnes 
+colnames(cluster1bis2) <- 1:ncol(cluster1bis)
+
+#Division des colonnes
+division1 <- cluster1bis[, 1:25]
+division2 <- cluster1bis[, 26:50]
+division3 <- cluster1bis[, 51:68]
+
+#cluster 1 A
+Correlation_1_A <- cor(division1, use = "complete.obs", method = "spearman")
+corrplot(Correlation_1_A, type = "upper", 
+         col = colorRampPalette(c("#3333FF", "#FFCCFF", "#FF0000"))(100), 
+         tl.col = "#333333", na.label = " ",tl.cex = 0.7)
+#cluster 1 B
+Correlation_1_B <- cor(division2, use = "complete.obs", method = "spearman")
+corrplot(Correlation_1_B, type = "upper", 
+        col = colorRampPalette(c("#3333FF", "#FFCCFF", "#FF0000"))(100), 
+        tl.col = "#333333", na.label = " ",tl.cex = 0.7)
+
+#cluster 1 C
+Correlation_1_C <- cor(division3, use = "complete.obs", method = "spearman")
+corrplot(Correlation_1_C, type = "upper",  
+        col = colorRampPalette(c("#3333FF", "#FFCCFF", "#FF0000"))(100), 
+        tl.col = "#333333", na.label = " ",tl.cex = 0.7)
+
+
+#cluster 2
+Correlation_2 = cor(cluster2bis,use = "complete.obs",method="s" )
+corrplot(Correlation_2, type = "upper", order = 'AOE', col = colorRampPalette(c("#3333FF", "#FFCCFF", "#FF0000"))(100), tl.col = "#333333")
+
+#cluster 3
+Correlation_3 = cor(cluster3bis,use = "complete.obs",method="s" )
+corrplot(Correlation_3, type = "upper", order = 'AOE', col = colorRampPalette(c("#3333FF", "#FFCCFF", "#FF0000"))(100), tl.col = "#333333")
+
+```
+
+
+
+
+
+
+
+
+
+# Sélection de variables
+
+Pour la sélection de variables, nous devons intégrer notre variable dépendante avec 4 retards et les variables indépendantes avec 1 retard
+
+```{r}
+# Conversion en data frame
+ynew2 <- as.data.frame(ynew2)
+
+# Application des retards
+ynew2 <- ynew2 %>%
+  mutate(across(.cols = 3:112, # Appliquer aux X qui commencent en 3e colonne
+                .fns = ~lag(., 1), # Retard de 1 pour les X
+                .names = "lag1_{.col}"),
+         IOP_PROD_lag4 = lag(IOP_PROD, 4)) # Retard de 4 pour le Y
+# Afficher les premières lignes
+View(ynew2)
+
+# Suppression des premières lignes qui contiennent des NA
+# car NA sur la première ligne pour tous les X et NA sur 4 lignes pour le Y
+ynew2 <- ynew2[-c(1:4), ]
+
+# Vérification des valeurs manquantes
+colSums(is.na(ynew2))
+```
+
+BDD pour sélection de variable
+
+```{r}
+dlbase <- data.frame(ynew2)
+summary(dlbase)
+str(dlbase)
+training_dlbase <- dlbase
+data.frame(training_dlbase)
+```
+
+Standardisation des variables et définition du y et des x pour les modèles à suivre
+
+```{r}
+y <- data.frame(training_dlbase) %>%
+  select(IOP_PROD) %>%
+  scale(center = T, scale = T) %>%
+  as.matrix()
+
+x <- data.frame(training_dlbase) %>%
+  select(-IOP_PROD, -Date) %>% # on retire la variable ? expliquer y
+  scale(center = T, scale = T) %>%
+  as.matrix()
+```
+
+library :
+
+```{r}
+library(readxl)
+library(tidyverse)
+library(lgarch)
+library(gets)
+```
+
+8)  Approche économétrique
+## GETS 
+qui ne va pas marcher normalement
+
+Convertion du df en matrix pour fct arx
+```{r}
+#class(dlbase[,2:223]) # on prend toutes les var sauf la date
+#mX = data.matrix(training_dlbase[,2:223])
+```
+
+```{r}
+#model <- arx(training_dlbase$IOP_PROD, mc = TRUE, ar = NULL, mxreg = mX[, 1:222], vcov.type = "white")
+#getsm <- getsm(model)
+```
+Trop long car trop de variables
+
+9)  Régressions pénalisées
+
+```{r}
+library(corrr)
+library(tidyverse)
+library(lgarch)		
+library(gets)
+library(glmnet) 	
+library(rbridge)
+library(foreach)
+library(doParallel)
+library(caret)
+```
+
+## RIDGE
+
+Ridge regression alpha = 0
+
+```{r}
+
+model_cv <- glmnet(x, y, alpha = 0, standardize = T)
+plot(model_cv)
+
+# 10-folds CV to choose lambda
+# seq(-3, 5, length.out = 100) : random sequence of 100 numbers betwwene -3 and 5
+lambdas_to_try <- 10^seq(-3, 5, length.out = 100)
+
+# alpha = 0, implementation of ridge regression
+# choix du meilleur lambda parmi 100
+ridge_cv <- cv.glmnet(x, y, alpha = 0, lambda = lambdas_to_try, standardize = T, nfolds = 10) 
+
+# Figures of lambdas
+plot(ridge_cv)
+
+# Best lambda obtained from CV (lambda.min) - other possibility: lambda.1se
+lambda_cv <- ridge_cv$lambda.min
+lambda_cv
+
+# Evaluation of the final model with the selected lambda
+model_cv <- glmnet(x, y, alpha = 0, lambda = lambda_cv, standardize = T)
+summary(model_cv)
+
+# Ridge betas
+model_cv$beta
+```
+lambda_cv
+[1] 0.04977024
+221 variables car pas de sélection
+
+## LASSO
+
+LASSO regression alpha = 1
+
+```{r}
+par(mfrow = c(1,1))
+model_cv <- glmnet(x, y, alpha = 1, standardize = T)
+plot(model_cv)
+
+# 10-folds CV to choose lambda
+lambdas_to_try <- 10^seq(-3, 5, length.out = 100)
+
+# alpha = 1, implementation of Lasso regression
+lasso_cv <- cv.glmnet(x, y, alpha = 1, lambda = lambdas_to_try, standardize = T, nfolds = 10) # choix du meilleur lambda parmi 100
+
+# Figures of lambdas
+plot(lasso_cv)
+
+# Best lambda obtained from CV (lambda.1se) - other possibility: lambda.min
+lambda_cv <- lasso_cv$lambda.1se
+lambda_cv
+
+# Evaluation of the final model with the selected lambda
+model_cv <- glmnet(x, y, alpha = 1, lambda = lambda_cv, standardize = T)
+
+# Lasso betas
+model_cv$beta
+
+# Get the name of relevant variables
+which(! coef(model_cv) == 0, arr.ind = TRUE)
+```
+lambda_cv
+[1] 0.03430469
+4 variables
+
+## ELASTIC NET
+
+### EN fixé à 0.5
+
+```{r}
+# Elastic-Net regression with alpha = 0.5
+lambdas_to_try <- 10^seq(-3, 5, length.out = 100)
+en_cv <- cv.glmnet(x, y, alpha = 0.5, lambda = lambdas_to_try, standardize = T, 
+                   nfolds = 10) 
+
+# Figures of lambdas
+plot(en_cv)
+lambda_cv <- en_cv$lambda.1se
+lambda_cv
+model_cv <- glmnet(x, y, alpha = 0.5, lambda = lambda_cv, standardize = T)
+# EN betas
+model_cv$beta
+# Get the name of relevant variables
+which(! coef(model_cv) == 0, arr.ind = TRUE)
+```
+lambda_cv
+[1] 0.04977024
+10 variables
+
+
+### EN grid search
+
+avec un alpha entre 0 et 1 choisi en séquence
+
+```{r}
+set.seed(123)  # Définir une graine (vous pouvez choisir n'importe quel nombre)
+
+# Initialisation de l'objet en_min
+en_min <- NULL
+
+# Essayer différentes valeurs de lambda
+lambdas_to_try <- 10^seq(-3, 5, length.out = 100)
+
+# Définir la liste des valeurs alpha
+alphalist <- seq(0.1, 1, by = 0.1)
+
+# Appliquer l'Elastic Net pour chaque valeur d'alpha
+elasticnet <- lapply(alphalist, function(a) {
+  cv.glmnet(x, y, alpha = a, lambda = lambdas_to_try, standardize = TRUE, nfolds = 10)
+})
+
+# Extraire les erreurs minimales pour chaque alpha
+for (i in 1:length(alphalist)) {
+  print(min(elasticnet[[i]]$cvm))  # Affiche l'erreur minimale
+  en_min <- c(en_min, min(elasticnet[[i]]$cvm))  # Ajoute à la liste des erreurs minimales
+}
+
+# Trouver l'alpha qui donne l'erreur minimale
+elasticnet_cvm <- min(en_min)
+elasticnet_cvm
+
+# Lambda optimal (lambda.1se)
+en_cv <- cv.glmnet(x, y, alpha = elasticnet_cvm, lambda = lambdas_to_try, standardize = TRUE, nfolds = 10) 
+
+# Tracer la figure des lambdas
+plot(en_cv)
+
+# Récupérer le lambda optimal (lambda.1se)
+lambda_cv <- en_cv$lambda.1se
+lambda_cv
+
+# Trouver l'alpha optimal
+best_alpha_index <- which.min(en_min)  # Trouver l'index de l'erreur minimale
+best_alpha <- alphalist[best_alpha_index]  # Récupérer l'alpha correspondant
+
+# Appliquer l'alpha optimal au modèle
+model_cv <- glmnet(x, y, alpha = best_alpha, lambda = lambda_cv, standardize = TRUE)
+
+# Coefficients du modèle Elastic Net
+model_cv$beta
+
+# Récupérer les noms des variables pertinentes
+which(!coef(model_cv) == 0, arr.ind = TRUE)
+
+```
+alpha choisi : 0.6
+lambda_cv
+[1] 0.1261857
+5 variables
+
+### EN caret = simultané
+
+```{r}
+# Renommer la colonne Y
+colnames(training_dlbase)[2] = "Y"
+
+# Renommer les colonnes X1 à X221 (pour 221 colonnes X)
+for (i in 3:223) {
+  colnames(training_dlbase)[i] = paste("X", i - 2, sep="")
+}
+
+
+# Transformer en format de série temporelle en excluant la colonne de date
+data = ts(training_dlbase[, 2:223], start = c(1998, 1), freq = 12)
+total = data
+# Standardize variables
+y = data.frame(total) %>% dplyr::select(Y) %>% scale(center=T, scale=T) %>% as.matrix()
+x = data.frame(total) %>% dplyr::select(-Y) %>% scale(center=T, scale=T) %>% as.matrix()
+total2 = data.frame(total) %>% scale(center=T, scale=T)
+
+# Choose alpha with caret package	
+model <- train(Y~., data=total2, method = "glmnet", trControl = trainControl("cv", number = 10), tuneLength = 10)
+
+# Best tuning parameter
+model$bestTune 
+coef(model$finalModel, model$bestTune$lambda)
+
+coef_matrix <- coef(model$finalModel, model$bestTune$lambda)
+# Compter les coefficients non nuls (en excluant l'intercept)
+sum(coef_matrix[-1, ] != 0)
+```
+alpha choisi : 1
+lambda
+0.0125606
+16 variables
+
+
+## SCAD
+
+```{r}
+#pour remettre les bonnes variables qui ont été changées en X
+training_dlbase <- dlbase
+data.frame(training_dlbase)
+y <- data.frame(training_dlbase) %>%
+  select(IOP_PROD) %>%
+  scale(center = T, scale = T) %>%
+  as.matrix()
+
+x <- data.frame(training_dlbase) %>%
+  select(-IOP_PROD, -Date) %>% # on retire la variable ? expliquer y
+  scale(center = T, scale = T) %>%
+  as.matrix()
+```
+
+```{r}
+library(ncvreg)
+
+fit_SCAD=ncvreg(x, y, penalty = c("SCAD"))
+plot(fit_SCAD)
+summary(fit_SCAD, lambda=0.10)
+
+# Validation croisÈ pour le meilleur lambda 
+cvfit_SCAD=cv.ncvreg(x, y, penalty = c("SCAD"))
+plot(cvfit_SCAD)
+
+# On attribue le meilleur lambda 
+lambda_SCAD <- cvfit_SCAD$lambda.min
+lambda_SCAD
+#Modele finale 
+SCAD_Final=ncvreg(x, y, lambda=lambda_SCAD, alpha = 1)
+SCAD_Final$beta
+
+which(! coef(SCAD_Final) == 0, arr.ind = TRUE)
+```
+lambda_SCAD
+[1] 0.02056516
+5 variables
+
+## A_LASSO
+
+```{r}
+# Adaptive Lasso regression using Ridge to compute the weights in the first step
+model_cv <- glmnet(x, y, alpha = 0, lambda = lambda_cv, standardize = T)
+coef_ridge <- predict(model_cv,type="coef",s=lambda_cv)
+# Weighted with gamma = 0.5
+gamma = 0.5
+w0 <- 1/(abs(coef_ridge) + (1/length(y)))
+poids.ridge <- w0^(gamma)
+poids.ridge <- poids.ridge[2:nrow(poids.ridge),]
+poids.ridge <- Matrix(poids.ridge)
+
+# Adaptive LASSO
+fit_adalasso <- glmnet(x, y, penalty.factor =poids.ridge)
+fit_cv_adalasso <- cv.glmnet(x, y,penalty.factor=poids.ridge)
+
+# Figure of lambdas 
+plot(fit_cv_adalasso)
+
+# Best lambda obtained from CV (lambda.1se) - other possibility: lambda.min
+lambda_cv <- fit_cv_adalasso$lambda.1se
+lambda_cv
+# Evaluation of the final model with the selected lambda
+model_cv <- glmnet(x, y, alpha = 1, lambda = lambda_cv, standardize = T)
+
+# Lasso betas
+model_cv$beta
+
+# Get the name of relevant variables
+which(! coef(model_cv) == 0, arr.ind = TRUE)
+```
+lambda_cv
+[1] 0.1081535
+2 variables
+
+## RLM
+```{r}
+library(MASS)
+
+# Ajuster le modèle RLM avec la variable IOP_PROD comme variable dépendante
+fit.rlm <- rlm(IOP_PROD ~ ., data = training_dlbase)
+
+# Résumé du modèle
+summary(fit.rlm)
+
+```
+
+
+10) Approche de réduction de dimension (SIS) + GETS et régressions pénalisées \# SIS
+
+```{r}
+library(readxl)
+library(tidyverse)
+library(SIS)
+```
+
+Ici on effectue un filtrage (réduction de dim)
+
+```{r}
+mod01 <- SIS(x, y, family="gaussian", penalty="MCP", tune="cv", nfolds=10, nsis=100)
+
+# indices selected by only SIS
+var <- mod01$sis.ix0	
+show(var)
+```
+
+66 variables sélectionnées
+
+Avec ces nouvelles variables, on crée une autre bdd (en gardant Y)
+
+```{r}
+replacement_values <- c(6, 8, 12, 13, 14, 15, 16, 18, 19, 20, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 56, 62, 63, 64, 65, 70, 71, 72, 74, 81, 83, 84, 85, 103, 104, 105, 108, 122, 123, 126, 127, 136, 141, 144, 150, 184, 191, 200, 208, 209, 210, 211)
+
+bdd_SIS <- ynew2[, c(2, replacement_values)] # pour garder Y
+bdd_training_SIS<- bdd_SIS
+data.frame(bdd_training_SIS)
+```
+
+Standardization des variables (Y+X)
+
+```{r}
+y <- data.frame(bdd_training_SIS) %>%
+  select(IOP_PROD) %>%
+  scale(center = T, scale = T) %>%
+  as.matrix()
+x <- data.frame(bdd_training_SIS) %>%
+  select(-IOP_PROD) %>% 
+  scale(center = T, scale = T) %>%
+  as.matrix()
+```
+
+## GETS
+
+```{r}
+mX = data.matrix(bdd_training_SIS[,2:67]) # ca marche !
+
+# Modèle ARX
+
+Model_IOP <- arx(bdd_training_SIS$IOP_PROD, mc = TRUE, ar = NULL, mxreg = mX[, 1:66], vcov.type = "white")
+Model_IOP
+
+# Modélisation du modèle GETS 
+# Décomposition du modèle ARX en ses composantes, telles que les erreurs,les tendances et les saisons.
+getsm_IOP <- getsm(Model_IOP) 
+getsm_IOP
+
+which(! coef(getsm_IOP) == 0, arr.ind = TRUE)
+```
+15 variables
+
+## RIDGE
+
+Ridge regression alpha = 0
+
+```{r}
+par(mfrow=c(1,1))
+model_cv <- glmnet(x, y, alpha = 0, standardize = T)
+plot(model_cv)
+
+# 10-folds CV to choose lambda
+# seq(-3, 5, length.out = 100) : random sequence of 100 numbers betwwene -3 and 5
+lambdas_to_try <- 10^seq(-3, 5, length.out = 100)
+
+# alpha = 0, implementation of ridge regression
+# choix du meilleur lambda parmi 100
+ridge_cv <- cv.glmnet(x, y, alpha = 0, lambda = lambdas_to_try, standardize = T, nfolds = 10) 
+
+# Figures of lambdas
+plot(ridge_cv)
+
+# Best lambda obtained from CV (lambda.min) - other possibility: lambda.1se
+lambda_cv <- ridge_cv$lambda.min
+lambda_cv
+
+# Evaluation of the final model with the selected lambda
+model_cv <- glmnet(x, y, alpha = 0, lambda = lambda_cv, standardize = T)
+summary(model_cv)
+
+# Ridge betas
+model_cv$beta
+```
+
+lambda_cv \[1\] 0.01353048 66 variables car pas de sélection
+
+## LASSO
+
+LASSO regression alpha = 1
+
+```{r}
+
+model_cv <- glmnet(x, y, alpha = 1, standardize = T)
+plot(model_cv)
+
+# 10-folds CV to choose lambda
+lambdas_to_try <- 10^seq(-3, 5, length.out = 100)
+
+# alpha = 1, implementation of Lasso regression
+lasso_cv <- cv.glmnet(x, y, alpha = 1, lambda = lambdas_to_try, standardize = T, nfolds = 10) # choix du meilleur lambda parmi 100
+
+# Figures of lambdas
+plot(lasso_cv)
+
+# Best lambda obtained from CV (lambda.1se) - other possibility: lambda.min
+lambda_cv <- lasso_cv$lambda.1se
+lambda_cv
+
+# Evaluation of the final model with the selected lambda
+model_cv <- glmnet(x, y, alpha = 1, lambda = lambda_cv, standardize = T)
+
+# Lasso betas
+model_cv$beta
+
+# Get the name of relevant variables
+which(! coef(model_cv) == 0, arr.ind = TRUE)
+```
+
+SANS SIS lambda_cv \[1\] 0.04132012 4 variables
+
+lambda_cv \[1\] 0.02848036 5 variables donc 1 de plus qu'avant SIS
+
+## ELASTIC NET
+
+### EN fixé à 0.5
+
+```{r}
+# Elastic-Net regression with alpha = 0.5
+lambdas_to_try <- 10^seq(-3, 5, length.out = 100)
+en_cv <- cv.glmnet(x, y, alpha = 0.5, lambda = lambdas_to_try, standardize = T, 
+                   nfolds = 10) 
+
+# Figures of lambdas
+plot(en_cv)
+lambda_cv <- en_cv$lambda.1se
+lambda_cv
+model_cv <- glmnet(x, y, alpha = 0.5, lambda = lambda_cv, standardize = T)
+# EN betas
+model_cv$beta
+# Get the name of relevant variables
+which(! coef(model_cv) == 0, arr.ind = TRUE)
+```
+
+SANS SIS lambda_cv \[1\] 0.04977024 10 variables
+
+lambda_cv \[1\] 0.04977024 9 variables
+
+### EN grid search
+
+avec un alpha entre 0 et 1 choisi en séquence
+
+```{r}
+en_min <- NULL
+lambdas_to_try <- 10^seq(-3, 5, length.out = 100)
+alphalist <- seq(0.1,by=0.1)
+elasticnet <- lapply(alphalist, function(a){
+cv.glmnet(x, y, alpha=a, lambda = lambdas_to_try, standardize = T, nfolds = 10)
+})
+for (i in 1:9) {
+print(min(elasticnet[[i]]$cvm))
+en_min <- c(en_min, min(elasticnet[[i]]$cvm))
+}
+elasticnet_cvm <- min(en_min)
+elasticnet_cvm
+
+# Best lambda obtained from CV (lambda.1se) - other possibility: lambda.min
+en_cv <- cv.glmnet(x, y, alpha = elasticnet_cvm, lambda = lambdas_to_try, standardize = T, nfolds = 10) 
+# Figures of lambdas
+plot(en_cv)
+lambda_cv <- en_cv$lambda.1se
+lambda_cv
+model_cv <- glmnet(x, y, alpha = 0.2, lambda = lambda_cv, standardize = T)
+# EN betas
+model_cv$beta
+# Get the name of relevant variables
+which(! coef(model_cv) == 0, arr.ind = TRUE)
+```
+
+SANS SIS lambda_cv \[1\] 0.1047616 17 variables
+
+lambda_cv \[1\] 0.05994843 14 variables
+
+### EN caret = simultané
+
+```{r}
+colnames(bdd_training_SIS)[1] = "Y"
+for (i in 1:66) {
+  colnames(bdd_training_SIS)[i+1] = paste("X", i, sep="")
+}
+
+# Transform into time-series format ts
+data = ts(bdd_training_SIS[,1:66], start=c(1998,1), freq=12)
+total = data
+# Standardize variables
+y = data.frame(total) %>% dplyr::select(Y) %>% scale(center=T, scale=T) %>% as.matrix()
+x = data.frame(total) %>% dplyr::select(-Y) %>% scale(center=T, scale=T) %>% as.matrix()
+total2 = data.frame(total) %>% scale(center=T, scale=T)
+
+# Choose alpha with caret package	
+model <- train(Y~., data=total2, method = "glmnet", trControl = trainControl("cv", number = 10), tuneLength = 10)
+
+# Best tuning parameter
+model$bestTune 
+coef(model$finalModel, model$bestTune$lambda)
+
+coef_matrix <- coef(model$finalModel, model$bestTune$lambda)
+# Compter les coefficients non nuls (en excluant l'intercept)
+sum(coef_matrix[-1, ] != 0)
+```
+
+SANS SIS lambda 0.005437186 39 variables
+
+lambda 0.0125606 11 variables
+
+## SCAD
+
+```{r}
+bdd_SIS <- ynew2[, c(2, replacement_values)] # pour garder Y
+bdd_training_SIS<- bdd_SIS
+data.frame(bdd_training_SIS)
+```
+
+Standardization des variables (Y+X)
+
+```{r}
+y <- data.frame(bdd_training_SIS) %>%
+  select(IOP_PROD) %>%
+  scale(center = T, scale = T) %>%
+  as.matrix()
+x <- data.frame(bdd_training_SIS) %>%
+  select(-IOP_PROD) %>% 
+  scale(center = T, scale = T) %>%
+  as.matrix()
+```
+
+```{r}
+library(ncvreg)
+
+fit_SCAD=ncvreg(x, y, penalty = c("SCAD"))
+plot(fit_SCAD)
+summary(fit_SCAD, lambda=0.10)
+
+# Validation croisÈ pour le meilleur lambda 
+cvfit_SCAD=cv.ncvreg(x, y, penalty = c("SCAD"))
+plot(cvfit_SCAD)
+
+# On attribue le meilleur lambda 
+lambda_SCAD <- cvfit_SCAD$lambda.min
+lambda_SCAD
+#Modele finale 
+SCAD_Final=ncvreg(x, y, lambda=lambda_SCAD, alpha = 1)
+SCAD_Final$beta
+
+# Extraire les coefficients du modèle final
+coefficients_SCAD <- SCAD_Final$beta
+
+# Exclure l'intercept (le premier coefficient)
+coefficients_non_zero <- coefficients_SCAD[-1]  # Exclut le premier élément (l'intercept)
+
+# Compter les variables avec des coefficients non nuls
+sum(coefficients_non_zero != 0)
+```
+
+SANS SIS lambda_SCAD \[1\] 0.01668103 7 variables
+
+lambda_SCAD \[1\] 0.05462287 5 variables
+
+## A_LASSO
+
+```{r}
+# Adaptive Lasso regression using Ridge to compute the weights in the first step
+model_cv <- glmnet(x, y, alpha = 0, lambda = lambda_cv, standardize = T)
+coef_ridge <- predict(model_cv,type="coef",s=lambda_cv)
+# Weighted with gamma = 0.5
+gamma = 0.5
+w0 <- 1/(abs(coef_ridge) + (1/length(y)))
+poids.ridge <- w0^(gamma)
+poids.ridge <- poids.ridge[2:nrow(poids.ridge),]
+poids.ridge <- Matrix(poids.ridge)
+
+# Adaptive LASSO
+fit_adalasso <- glmnet(x, y, penalty.factor =poids.ridge)
+fit_cv_adalasso <- cv.glmnet(x, y,penalty.factor=poids.ridge)
+
+# Figure of lambdas 
+plot(fit_cv_adalasso)
+
+# Best lambda obtained from CV (lambda.1se) - other possibility: lambda.min
+lambda_cv <- fit_cv_adalasso$lambda.1se
+lambda_cv
+# Evaluation of the final model with the selected lambda
+model_cv <- glmnet(x, y, alpha = 1, lambda = lambda_cv, standardize = T)
+
+# Lasso betas
+model_cv$beta
+
+# Get the name of relevant variables
+which(! coef(model_cv) == 0, arr.ind = TRUE)
+```
+
+SANS SIS lambda_cv \[1\] 0.1130168 2 variables
+
+lambda_cv \[1\] 0.1479289 2 variables
+
+11) Gradient Boosting \
+# Gradient Boosting sans SIS
+
+```{r}
+library(gbm)
+```
+
+test pour le meilleur shrinkage
+
+```{r}
+#test de plusieurs taux de shrinkage pour controler la correction (plus ou moins forte) de chaque arbre sur le précedent.
+vecvalshrink=c(0.1,0.05,0.01,0.001)
+matres=NULL
+
+# boucle : pour chaque valeur de shrinkage, un modèle GBM est entraîné sur la variable cible IOP_PROD (dépendante) en fonction des autres variables explicatives.
+for (valshrink in vecvalshrink) {
+    fit.gbm<- gbm(IOP_PROD~., data=training_dlbase, 
+                  n.trees=5000,interaction.depth=2,
+                  shrinkage = valshrink, bag.fraction=0.5,
+                  cv.folds=5)
+    matres=cbind(matres,fit.gbm$cv.error)
+}
+
+
+# Cette fonction crée un graphique qui affiche l'erreur de validation croisée (cv.error) en fonction du nombre d'arbres pour chaque valeur de shrinkage. Chaque courbe correspond à une valeur de shrinkage.
+X11();
+matplot(matres,type="l",col=1:length(vecvalshrink),lty=1,main="depth=2",ylab="_CV",
+        xlab="number of trees")
+legend("topright",col=1:length(vecvalshrink),lty=1,paste("shrink",vecvalshrink))
+```
+
+Dans ce cas, le shrinkage de 0.05 semble offrir le meilleur compromis entre performance et nombre d'arbres nécessaires, car l'erreur de validation croisée est minimale et stable à partir de 1000-1500 arbres.
+
+Ajustement avec parametres choisis (shrinkage = 0.05)
+
+```{r}
+fit.gbm <- gbm(IOP_PROD ~ ., data=training_dlbase,
+               distribution = "gaussian",  # Spécifie une régression
+               n.trees=50, interaction.depth=4,
+               shrinkage=0.05, bag.fraction=0.5, cv.folds=5)
+```
+
+Affichage des variables les plus importantes
+
+```{r}
+summary(fit.gbm, n.trees = fit.gbm$n.trees)
+```
+
+graph :
+
+```{r}
+# Récupération de l'importance des variables
+importance_vars <- summary(fit.gbm, n.trees = fit.gbm$n.trees, plotit = FALSE)
+
+# Filtrer les variables avec une influence relative supérieure à 1
+filtered_vars <- importance_vars[importance_vars$rel.inf > 1, ]
+
+# Visualisation des variables filtrées avec une influence relative > 1
+par(mfrow = c(2, 2))
+barplot(filtered_vars$rel.inf, names.arg = filtered_vars$var, las = 2, 
+        main = "Variables avec influence relative > 1", 
+        ylab = "Relative Influence", col = "blue")
+
+```
+
+# Gradient Boosting avec SIS
+
+test pour le meilleur shrinkage
+
+```{r}
+#test de plusieurs taux de shrinkage pour controler la correction (plus ou moins forte) de chaque arbre sur le précedent.
+vecvalshrink=c(0.1,0.05,0.01,0.001)
+matres=NULL
+
+# boucle : pour chaque valeur de shrinkage, un modèle GBM est entraîné sur la variable cible IOP_PROD (dépendante) en fonction des autres variables explicatives.
+for (valshrink in vecvalshrink) {
+    fit.gbm<- gbm(IOP_PROD~., data=bdd_SIS, 
+                  n.trees=5000,interaction.depth=2,
+                  shrinkage = valshrink, bag.fraction=0.5,
+                  cv.folds=5)
+    matres=cbind(matres,fit.gbm$cv.error)
+}
+
+
+# Cette fonction crée un graphique qui affiche l'erreur de validation croisée (cv.error) en fonction du nombre d'arbres pour chaque valeur de shrinkage. Chaque courbe correspond à une valeur de shrinkage.
+X11();
+matplot(matres,type="l",col=1:length(vecvalshrink),lty=1,main="depth=2",ylab="_CV",
+        xlab="number of trees")
+legend("topright",col=1:length(vecvalshrink),lty=1,paste("shrink",vecvalshrink))
+```
+
+Dans ce cas, le shrinkage de 0.05 semble offrir le meilleur compromis entre performance et nombre d'arbres nécessaires, car la courbe verte continue à descendre sans plateau marqué à un nombre raisonnable d'arbres (environ 2000-3000).
+
+Ajustement avec parametres choisis (shrinkage = 0.05)
+
+```{r}
+fit.gbm <- gbm(IOP_PROD ~ ., data=bdd_SIS,
+               distribution = "gaussian",  # Spécifie une régression
+               n.trees=50, interaction.depth=4,
+               shrinkage=0.05, bag.fraction=0.5, cv.folds=5)
+```
+
+Affichage des variables les plus importantes
+
+```{r}
+summary(fit.gbm, n.trees = fit.gbm$n.trees)
+```
+
+graph :
+
+```{r}
+# Récupération de l'importance des variables
+importance_vars <- summary(fit.gbm, n.trees = fit.gbm$n.trees, plotit = FALSE)
+
+# Filtrer les variables avec une influence relative supérieure à 1
+filtered_vars <- importance_vars[importance_vars$rel.inf > 1, ]
+
+# Visualisation des variables filtrées avec une influence relative > 1
+par(mfrow = c(2, 2))
+barplot(filtered_vars$rel.inf, names.arg = filtered_vars$var, las = 2, 
+        main = "Variables avec influence relative > 1", 
+        ylab = "Relative Influence", col = "blue")
+
+```
