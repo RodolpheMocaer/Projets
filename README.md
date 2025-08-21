@@ -19,14 +19,6 @@ Tous ces projets suivent une démarche rigoureuse et structurée :
 ---
 
 ## Liste détaillée de mes projets par catégorie
-
-### 🏦 [Rapport de stage](./rapport_de_stage)
-**Outils :** Rstudio, Hadoop, Starburst(SQL)
-
--[M2] Rapprochement et étude de deux indicateurs financiers dans le cadre du projet valeurs clients
-
----
-
 ### 📊 [Data Visualisation](./data-visualisation)  
 **Outils :** RShiny, Power BI, Dash, SAS VI
 
